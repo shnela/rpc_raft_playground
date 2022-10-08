@@ -3,6 +3,8 @@
 
 source ~/.venvs/raft/bin/activate
 
+rm ./log.log
+
 for port in 18850 18851 18852; do
     python service.py $port &
 done;

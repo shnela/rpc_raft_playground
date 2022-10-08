@@ -19,9 +19,12 @@ CLUSTER_PORTS = (
 logger = logging.getLogger(__name__)
 logger.setLevel(level=logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - [pid %(process)d] %(message)s")
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+stream_handler = logging.StreamHandler()
+file_handler = logging.FileHandler("log.log")
+stream_handler.setFormatter(formatter)
+file_handler.setFormatter(formatter)
+logger.addHandler(stream_handler)
+logger.addHandler(file_handler)
 
 
 class MyService(rpyc.Service):
@@ -37,8 +40,11 @@ class MyService(rpyc.Service):
         logger.debug("disconnected")
 
     def exposed_incr(self):
+        # sleep(1 + random())
         val = self.val
         self.val += 1
+        if self.val % 10 == 0:
+            logger.info(f"Achieved {self.val}")
         return val
 
 
@@ -69,20 +75,33 @@ def init_connections(service_port):
 
 
 def call_cluster(service_port):
-    connections = init_connections(service_port)
-    while True:
-        peer_port, peer_connection = choice(list(connections.items()))
-        cluster_service = peer_connection.root
+    def callback(async_result):
+        inc_result = async_result.value
+        logger.info(f"[x] {service_port} -> {peer_port} = {inc_result}")
 
-        inc_result = cluster_service.incr()
-        logger.info(f"{service_port} -> {peer_port} {inc_result}")
-        sleep(1 + random())
+    connections = init_connections(service_port)
+    sleep(1)
+
+    op_no = 0
+    while True:
+        for peer_port, peer_connection in connections.items():
+            cluster_service = peer_connection.root
+
+            async_inc = rpyc.async_(cluster_service.incr)
+            async_result = async_inc()
+            async_result.add_callback(callback)
+            logger.info(f"[ ] {service_port} -> {peer_port} ({op_no})")
+            op_no += 1
 
 
 if __name__ == "__main__":
     service_port = int(sys.argv[1])
 
     service_thread = Thread(target=run_service, args=(service_port,))
+    call_thread = Thread(target=call_cluster, args=(service_port,))
     service_thread.start()
+    call_thread.start()
+
+    call_thread.join()
 
     call_cluster(service_port)
